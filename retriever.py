@@ -4,12 +4,13 @@ Builds a merged retriever across all three Chroma collections:
   - tickets : resolved support tickets (no chunking — 1 ticket = 1 doc)
   - guides  : PDF guide chunks (RecursiveCharacterTextSplitter applied at ingest)
 """
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.runnables import RunnableLambda
 from langchain_core.documents import Document
 
-CHROMA_DIR  = "chroma_store"
+CHROMA_DIR = "chroma_store"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -18,6 +19,7 @@ def build_retriever(
     k_tickets: int = 3,
     k_guides: int = 3,
 ) -> RunnableLambda:
+
     embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
     faq_store = Chroma(
@@ -25,20 +27,63 @@ def build_retriever(
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR,
     )
+
     tickets_store = Chroma(
         collection_name="tickets",
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR,
     )
+
     guides_store = Chroma(
         collection_name="guides",
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR,
     )
 
-    faq_retriever     = faq_store.as_retriever(search_kwargs={"k": k_faq})
-    tickets_retriever = tickets_store.as_retriever(search_kwargs={"k": k_tickets})
-    guides_retriever  = guides_store.as_retriever(search_kwargs={"k": k_guides})
+    # Build missing collections automatically.
+    if faq_store._collection.count() == 0:
+        from ingest_faq import main as ingest_faq
+        ingest_faq()
+
+    if tickets_store._collection.count() == 0:
+        from ingest_tickets import main as ingest_tickets
+        ingest_tickets()
+
+    if guides_store._collection.count() == 0:
+        from ingest_pdf import main as ingest_pdf
+        ingest_pdf()
+
+    # Re-open the stores after ingestion so the retrievers
+    # see the newly created vectors.
+    faq_store = Chroma(
+        collection_name="faq",
+        embedding_function=embeddings,
+        persist_directory=CHROMA_DIR,
+    )
+
+    tickets_store = Chroma(
+        collection_name="tickets",
+        embedding_function=embeddings,
+        persist_directory=CHROMA_DIR,
+    )
+
+    guides_store = Chroma(
+        collection_name="guides",
+        embedding_function=embeddings,
+        persist_directory=CHROMA_DIR,
+    )
+
+    faq_retriever = faq_store.as_retriever(
+        search_kwargs={"k": k_faq}
+    )
+
+    tickets_retriever = tickets_store.as_retriever(
+        search_kwargs={"k": k_tickets}
+    )
+
+    guides_retriever = guides_store.as_retriever(
+        search_kwargs={"k": k_guides}
+    )
 
     def retrieve(query: str) -> list[Document]:
         return (
